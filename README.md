@@ -1,180 +1,106 @@
-# 🎬 CineGraph — GraphRAG Demo
+# GraphLens
 
-> **Prove that graph traversal beats vector RAG for relationship-heavy queries — visually, interactively, in real time.**
-
-CineGraph is a demo application built on **TMDB movie data** and **Neo4j AuraDB**. Ask a natural-language question, watch a force-directed graph animate on screen, read the generated Cypher query, and get an AI answer — all powered by graph traversal, zero embeddings.
+A GraphRAG demo application that answers natural-language questions about movies using graph traversal instead of vector embeddings. Ask a question, watch a force-directed graph animate in real time, inspect the generated Cypher query, and read an AI-synthesized answer — all without a vector database.
 
 ---
 
-## 🧠 What is GraphRAG?
+## What is GraphRAG?
 
-Standard RAG splits documents into chunks, embeds them, and retrieves the most similar ones. It works well for *"What year was The Matrix released?"* — but completely breaks down for relational questions like:
+Standard RAG splits documents into chunks, embeds them, and retrieves the most similar ones by cosine distance. This works well for simple factual lookups but structurally cannot answer relational questions such as:
 
-- *"Which actors worked with both Tom Hanks **and** Meg Ryan?"* → requires set intersection across two paths
-- *"How is Kevin Bacon connected to Tom Hanks?"* → requires shortest-path traversal across 4+ hops
-- *"Actors in Nolan films who never co-starred together?"* → requires exclusion reasoning over a graph complement
+- *Which actors worked with both Tom Hanks and Meg Ryan?* — requires set intersection across two traversal paths
+- *How is Kevin Bacon connected to Tom Hanks?* — requires shortest-path traversal across 4+ hops
+- *Which actors in Nolan films never co-starred together?* — requires exclusion reasoning over a graph complement
 
-**No chunk size, no re-ranking strategy, no retrieval k can fix this.** The operations are structurally absent from the vector RAG paradigm. Graph traversal is the only answer.
-
----
-
-## 🏗️ System Architecture
-
-```mermaid
-graph TB
-    subgraph User["👤 User"]
-        Browser["🌐 Browser\nlocalhost:8501"]
-    end
-
-    subgraph Frontend["🖥️ Frontend — Streamlit (port 8501)"]
-        UI["app.py\n─────────────\n• Health check on load\n• 3-column layout\n• Example question buttons\n• agraph canvas\n• Session state"]
-    end
-
-    subgraph Backend["🔙 Backend — FastAPI (port 8000)"]
-        direction TB
-        Main["main.py\nFastAPI + CORS"]
-        RouteQ["routes/query.py\nPOST /api/query"]
-        RouteS["routes/schema.py\nGET /api/schema\nGET /api/examples\nGET /health"]
-        LLM["services/llm_service.py\n─────────────\ngenerate_cypher()\nsynthesize_answer()"]
-        Neo4jSvc["services/neo4j_service.py\n─────────────\nrun_cypher()\nbuild_graph_data()\nget_schema()"]
-        Prompt["prompts/cypher_prompt.py\n─────────────\nSystem prompt\nFew-shot examples"]
-
-        Main --> RouteQ
-        Main --> RouteS
-        RouteQ --> LLM
-        RouteQ --> Neo4jSvc
-        LLM --> Prompt
-    end
-
-    subgraph External["☁️ External Services"]
-        OpenAI["🤖 OpenAI GPT-4o"]
-        Neo4j["🗄️ Neo4j AuraDB"]
-        TMDB["🎬 TMDB API"]
-    end
-
-    subgraph Seed["🌱 Seed Script"]
-        SeedScript["seed/load_tmdb.py\nFetch → Extract → Load"]
-    end
-
-    Browser -->|"HTTP"| UI
-    UI -->|"httpx POST /api/query"| Main
-    UI -->|"httpx GET /api/health\n/schema · /examples"| Main
-    LLM -->|"Chat Completions API"| OpenAI
-    Neo4jSvc -->|"Async Cypher"| Neo4j
-    SeedScript -->|"Fetch movies"| TMDB
-    SeedScript -->|"MERGE nodes & rels"| Neo4j
-
-    style Frontend fill:#e8f5e9,stroke:#2e7d32
-    style Backend fill:#fff3e0,stroke:#e65100
-    style External fill:#fce4ec,stroke:#c62828
-    style Seed fill:#e8eaf6,stroke:#3949ab
-```
+No chunk size, no re-ranking strategy, and no retrieval depth can fix this. The operations are absent from the vector paradigm. Graph traversal is the only answer.
 
 ---
 
-## 🔄 Request Flow
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant ST as 🖥️ Streamlit
-    participant FA as 🔙 FastAPI
-    participant LLM as 🤖 GPT-4o
-    participant N4J as 🗄️ Neo4j AuraDB
-
-    User->>ST: Types question & clicks Ask
-    ST->>FA: POST /api/query {"question": "..."}
-    FA->>LLM: System prompt + schema + question
-    Note over LLM: Generates Cypher query
-    LLM-->>FA: "MATCH (p:Person)..."
-    FA->>N4J: Execute Cypher (async)
-    Note over N4J: Graph traversal — walks edges
-    N4J-->>FA: Raw records (nodes + relationships)
-    FA->>FA: build_graph_data(records)
-    FA->>LLM: Question + Cypher + raw results
-    Note over LLM: Synthesizes conversational answer
-    LLM-->>FA: Natural language answer
-    FA-->>ST: {answer, cypher, graph_data, meta}
-    ST-->>User: Live graph + Answer + Cypher
-```
-
----
-
-## 🗄️ Graph Schema
-
-```mermaid
-graph LR
-    Person["🧑 Person\n──────\nname · born"]
-    Movie["🎬 Movie\n──────\ntitle · year\ntagline · revenue · rating"]
-    Genre["🎭 Genre\n──────\nname"]
-    Studio["🏢 Studio\n──────\nname"]
-
-    Person -->|"ACTED_IN {roles}"| Movie
-    Person -->|"DIRECTED"| Movie
-    Person -->|"WROTE"| Movie
-    Movie -->|"IN_GENRE"| Genre
-    Movie -->|"PRODUCED_BY"| Studio
-
-    style Person fill:#7F77DD,color:#fff,stroke:#5a52b0
-    style Movie fill:#E8593C,color:#fff,stroke:#b03a1e
-    style Genre fill:#1D9E75,color:#fff,stroke:#117a55
-    style Studio fill:#BA7517,color:#fff,stroke:#8a5510
-```
-
-> 📄 Full architecture details (all 5 diagrams) in [ARCHITECTURE.md](./ARCHITECTURE.md)
-
----
-
-## ✨ Features
-
-- 🔍 **Natural language → Cypher** — GPT-4o generates Cypher queries from plain English
-- 🕸️ **Live graph visualization** — force-directed subgraph renders for every query
-- 💬 **Conversational answers** — LLM synthesizes results into readable prose
-- ⚡ **7 demo questions** — from 1-hop warmups to 4+ hop shortest paths
-- 🎨 **Color-coded nodes** — Movies, People, Genres, and Studios each have distinct colors
-- 🚫 **No vector DB, no embeddings** — pure graph retrieval from start to finish
-
----
-
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| 🔙 **Backend** | Python 3.11+, FastAPI |
-| 🤖 **LLM** | OpenAI GPT-4o |
-| 🗄️ **Graph DB** | Neo4j AuraDB (free tier) |
-| 🖥️ **Frontend** | Streamlit |
-| 📊 **Graph Viz** | streamlit-agraph |
-| 🌐 **HTTP Client** | httpx |
+| Backend | Python 3.11+, FastAPI |
+| LLM | OpenAI GPT-4o |
+| Graph database | Neo4j AuraDB (free tier) |
+| Frontend | Streamlit |
+| Graph visualization | streamlit-agraph |
+| HTTP client | httpx |
 
-> **100% Python.** No Node.js, no Docker, no npm. A single `pip install -r requirements.txt` installs everything.
+100% Python. No Node.js, no Docker, no npm. A single `pip install -r requirements.txt` installs everything.
 
 ---
 
-## 📋 Prerequisites
+## Architecture
 
-Before you start, make sure you have:
+The system has three moving parts: a Streamlit frontend, a FastAPI backend, and Neo4j AuraDB as the graph store.
+
+```
+Browser (port 8501)
+    |
+    |-- HTTP --> Streamlit app.py
+                    |
+                    |-- POST /api/query --> FastAPI
+                    |-- GET  /api/health
+                    |-- GET  /api/schema
+                    |-- GET  /api/examples
+                                |
+                                |-- generate_cypher()  --> OpenAI GPT-4o
+                                |-- run_cypher()       --> Neo4j AuraDB
+                                |-- synthesize_answer()--> OpenAI GPT-4o
+```
+
+**Request flow for a single question:**
+
+1. User submits a question in the Streamlit UI
+2. FastAPI sends the schema and question to GPT-4o, which returns a Cypher query
+3. FastAPI executes the Cypher query asynchronously against Neo4j AuraDB
+4. Raw records (nodes, relationships, paths) are parsed into a graph payload
+5. GPT-4o synthesizes a conversational answer from the question, the Cypher, and the raw results
+6. Streamlit renders the force-directed graph, the natural-language answer, and the Cypher side by side
+
+---
+
+## Graph Schema
+
+```
+(Person)-[:ACTED_IN {roles}]->(Movie)
+(Person)-[:DIRECTED]-------->(Movie)
+(Person)-[:WROTE]---------->(Movie)
+(Movie)-[:IN_GENRE]-------->(Genre)
+(Movie)-[:PRODUCED_BY]----->(Studio)
+
+Node properties
+  Person : name, born
+  Movie  : title, year, tagline, revenue, rating
+  Genre  : name
+  Studio : name
+```
+
+---
+
+## Prerequisites
 
 | Requirement | Notes |
 |---|---|
-| 🐍 **Python 3.11+** | Check with `python3 --version` |
-| ☁️ **Neo4j AuraDB account** | Free tier at [neo4j.com/cloud/aura](https://neo4j.com/cloud/aura/) — no local install needed |
-| 🔑 **OpenAI API key** | GPT-4o access at [platform.openai.com](https://platform.openai.com/api-keys) |
-| 🎬 **TMDB API key** | Free key at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
+| Python 3.11+ | Check with `python3 --version` |
+| Neo4j AuraDB account | Free tier at neo4j.com/cloud/aura — no local install needed |
+| OpenAI API key | GPT-4o access at platform.openai.com |
+| TMDB API key | Free key at themoviedb.org/settings/api |
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
-### Step 1 — Clone & Install
+**Step 1 — Clone and install**
 
 ```bash
 git clone https://github.com/techwithprateek/graphrag
-cd graphrag/cinegraph
+cd graphrag
 pip install -r requirements.txt
 ```
 
-### Step 2 — Configure Credentials
+**Step 2 — Configure credentials**
 
 ```bash
 cp .env.example .env
@@ -182,7 +108,7 @@ cp .env.example .env
 
 Open `.env` and fill in your keys:
 
-```bash
+```
 OPENAI_API_KEY=sk-...
 NEO4J_URI=neo4j+s://xxxx.databases.neo4j.io
 NEO4J_USERNAME=neo4j
@@ -190,118 +116,112 @@ NEO4J_PASSWORD=your-password
 TMDB_API_KEY=your-tmdb-key
 ```
 
-### Step 3 — Seed the Database
+**Step 3 — Seed the database**
 
 ```bash
 python3 seed/load_tmdb.py
 ```
 
-This downloads ~200 popular movies from the TMDB API — cast, crew, genres, and production studios — and loads them into Neo4j as a rich property graph. Takes about 2–3 minutes.
+Downloads approximately 200 popular movies from TMDB — cast, crew, genres, and production studios — and loads them into Neo4j as a property graph. Takes 2–3 minutes.
 
-### Step 4 — Start the Backend
+**Step 4 — Start the backend**
 
 ```bash
 # Terminal 1
 uvicorn backend.main:app --reload
 ```
 
-Backend runs at **http://localhost:8000**
+Backend runs at http://localhost:8000
 
-### Step 5 — Start the Frontend
+**Step 5 — Start the frontend**
 
 ```bash
 # Terminal 2
 streamlit run frontend/app.py
 ```
 
-Open **http://localhost:8501** in your browser. 🎉
+Open http://localhost:8501 in your browser.
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
-cinegraph/
-│
-├── 🔙 backend/
-│   ├── main.py                  # FastAPI app · CORS · route registration
-│   ├── config.py                # Loads credentials from .env
-│   ├── models.py                # Pydantic request & response models
-│   │
-│   ├── routes/
-│   │   ├── query.py             # POST /api/query — LLM + Neo4j orchestration
-│   │   └── schema.py            # GET /api/schema · /api/examples · /health
-│   │
-│   ├── services/
-│   │   ├── neo4j_service.py     # Async Neo4j driver · Cypher execution · graph builder
-│   │   └── llm_service.py       # GPT-4o: generate_cypher() + synthesize_answer()
-│   │
-│   └── prompts/
-│       └── cypher_prompt.py     # System prompts · few-shot Cypher examples
-│
-├── 🖥️ frontend/
-│   └── app.py                   # Entire Streamlit UI in one file
-│
-├── 🌱 seed/
-│   └── load_tmdb.py             # Downloads TMDB data → loads into Neo4j
-│
-├── requirements.txt             # All Python dependencies
-├── .env.example                 # Credential template
-└── README.md
+graphrag/
+|
+|-- backend/
+|   |-- main.py                  # FastAPI app, CORS, route registration
+|   |-- config.py                # Loads credentials from .env
+|   |-- models.py                # Pydantic request and response models
+|   |
+|   |-- routes/
+|   |   |-- query.py             # POST /api/query — orchestrates LLM + Neo4j
+|   |   `-- schema.py            # GET /api/schema, /api/examples, /health
+|   |
+|   |-- services/
+|   |   |-- neo4j_service.py     # Async Neo4j driver, Cypher execution, graph builder
+|   |   `-- llm_service.py       # GPT-4o: generate_cypher() and synthesize_answer()
+|   |
+|   `-- prompts/
+|       `-- cypher_prompt.py     # System prompts and few-shot Cypher examples
+|
+|-- frontend/
+|   `-- app.py                   # Entire Streamlit UI in one file
+|
+|-- seed/
+|   `-- load_tmdb.py             # Downloads TMDB data and loads into Neo4j
+|
+|-- requirements.txt
+|-- .env.example
+`-- README.md
 ```
 
 ---
 
-## 🎯 Demo Walkthrough
-
-Click these example questions in the UI sidebar to see GraphRAG in action:
-
-| # | Question | Why it needs graph traversal |
-|---|---|---|
-| 1️⃣ | *[1 hop] Which movies did Tom Hanks act in?* | Warmup — single `ACTED_IN` edge |
-| 2️⃣ | *[2 hops] Which actors worked with both Tom Hanks and Meg Ryan?* | Set intersection across two actor→movie paths |
-| 3️⃣ | *[2 hops] Which directors have worked with Keanu Reeves more than once?* | Edge-count aggregation |
-| 4️⃣ | *[3 hops] Which actor has appeared in the most genres?* | Cross-entity aggregation: Person→Movie→Genre |
-| 5️⃣ | *[4+ hops] How is Kevin Bacon connected to Tom Hanks?* | 🌟 **Showpiece** — `shortestPath()` across the graph |
-| 6️⃣ | *[3 hops] Which movies share the director and genre of The Matrix?* | Multi-condition graph join |
-| 7️⃣ | *[3 hops + exclusion] Actors in Nolan films who never co-starred together?* | Exclusion reasoning — impossible for vector RAG |
-
-**What to watch:** Column 2 shows the live graph. Column 3 shows the exact Cypher that was executed — it walks edges, it doesn't search text.
-
----
-
-## 🎨 Graph Node Colors
-
-| Color | Node Type |
-|---|---|
-| 🔴 `#E8593C` Coral | 🎬 Movie |
-| 🟣 `#7F77DD` Purple | 🧑 Person (Actor / Director / Writer) |
-| 🟢 `#1D9E75` Teal | 🎭 Genre |
-| 🟡 `#BA7517` Amber | 🏢 Studio |
-
----
-
-## ❓ Why Not Vector RAG?
-
-Vector RAG retrieves text chunks by embedding similarity. It fails on relational queries because:
-
-**🔗 Shortest path (Q5):** The connection between Kevin Bacon and Tom Hanks is a *path* across 4+ relationship hops. No text chunk contains this path. Even retrieving all chunks mentioning both actors gives you a bag of facts, not a traversal route. Only `shortestPath()` in Cypher can answer this.
-
-**🚫 Exclusion reasoning (Q7):** Finding actors who *never* co-starred requires computing the complement of a relationship set. This is a structural graph operation. It cannot be approximated by any combination of embedding retrieval, re-ranking, or prompt engineering.
-
-These aren't edge cases — they're the majority of interesting questions about connected data.
-
----
-
-## 📡 API Endpoints
+## API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/health` | Liveness check |
-| `GET` | `/api/schema` | Neo4j node labels, relationship types, property keys |
-| `GET` | `/api/examples` | The 7 demo questions |
-| `POST` | `/api/query` | Main endpoint: question → Cypher → answer + graph |
+| GET | `/api/health` | Liveness check |
+| GET | `/api/schema` | Node labels, relationship types, property keys |
+| GET | `/api/examples` | The 7 built-in demo questions |
+| POST | `/api/query` | Main endpoint: question → Cypher → answer + graph |
 
 ---
 
-*Built with ❤️ to show that for relationship-heavy data, the graph wins.*
+## Demo Questions
+
+The UI sidebar includes seven example questions that cover progressively harder graph operations:
+
+| # | Question | Graph operation |
+|---|---|---|
+| 1 | Which movies did Tom Hanks act in? | 1-hop, single edge type |
+| 2 | Which actors worked with both Tom Hanks and Meg Ryan? | 2-hop set intersection |
+| 3 | Which directors have worked with Keanu Reeves more than once? | 2-hop edge-count aggregation |
+| 4 | Which actor has appeared in the most genres? | 3-hop cross-entity aggregation |
+| 5 | How is Kevin Bacon connected to Tom Hanks? | 4+ hop `shortestPath()` |
+| 6 | Which movies share the director and genre of The Matrix? | 3-hop multi-condition join |
+| 7 | Actors in Nolan films who never co-starred together? | 3-hop exclusion reasoning |
+
+Questions 5 and 7 are the clearest demonstration of what graph traversal can do that vector RAG structurally cannot.
+
+---
+
+## Why Not Vector RAG?
+
+**Shortest path (Q5):** The connection between Kevin Bacon and Tom Hanks is a path across 4+ relationship hops. No text chunk contains this path. Retrieving every chunk that mentions both actors gives a bag of facts, not a traversal route. Only `shortestPath()` in Cypher can answer this correctly.
+
+**Exclusion reasoning (Q7):** Finding actors who *never* co-starred requires computing the complement of a relationship set — a structural graph operation with no vector equivalent. It cannot be approximated by any combination of embedding retrieval, re-ranking, or prompt engineering.
+
+These are not edge cases. They represent the majority of interesting questions about connected data.
+
+---
+
+## Node Colors
+
+| Color | Node type |
+|---|---|
+| Coral `#E8593C` | Movie |
+| Purple `#7F77DD` | Person (actor, director, writer) |
+| Teal `#1D9E75` | Genre |
+| Amber `#BA7517` | Studio |
